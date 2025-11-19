@@ -459,14 +459,5 @@ If you use SolProvenance in research or production:
 
 ---
 
-## License
-
-All documentation, prose, and explanatory text in this repository
-is licensed under the Creative Commons Attribution 4.0 International License (CC-BY-4.0).
-
-All source code (Python scripts, tooling, schemas, utilities) is licensed under the MIT License.
-
----
-
 > "They don't have a time machine."  
 > — Sol Framework, on the immutability of cryptographic provenance

@@ -88,6 +88,17 @@ SKEET_COLLECTION = "app.bsky.feed.post"
 
 
 # === Helper utilities ===
+def read_multiline(prompt="Enter text (finish with CTRL+D):"):
+    print(prompt)
+    lines = []
+    try:
+        while True:
+            line = input()
+            lines.append(line)
+    except EOFError:
+        pass
+    return "\n".join(lines)
+
 def now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -261,8 +272,7 @@ def append_ledger_entry(entry: dict, ledger_path: str = "ledger.jsonl") -> None:
 
 # === Main orchestration ===
 def main() -> None:
-    print("Enter skeet text (Ctrl+C to abort):")
-    post_text = input("> ").strip()
+    post_text = read_multiline().strip()
     if not post_text:
         print("No post text provided; aborting.")
         return
