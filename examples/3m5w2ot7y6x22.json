@@ -1,0 +1,10 @@
+{
+  "$type": "com.SolProvenance.provenanceOTS",
+  "skeetCid": "bafyreifyjhgheddfpbjikt6shzomm76ozflgtmo3ghqyc5kqgtw3zjq6ni",
+  "skeetUri": "at://did:plc:byx3kr7gssh54fvaxlcttomn/app.bsky.feed.post/3m5w2orpjcb2o",
+  "stampedAt": "2025-11-18T15:31:49.459883Z",
+  "bindingStampHash": "2d5925401e23a297a94a83037e707fa0af5a0c6376340c619ec494852ed1e3a3",
+  "provenanceRootCid": "bafyreif6mjr2esbppjwvhp4shja5yi7mzuq4p6nluu27c4khn7wcrocfde",
+  "provenanceRootUri": "at://did:plc:byx3kr7gssh54fvaxlcttomn/com.SolProvenance.provenanceRoot/3m5w2ornkgy25",
+  "bindingOTSProofB64": "AE9wZW5UaW1lc3RhbXBzAABQcm9vZgC/ieLohOiSlAEIYTDk24A/gnD2QOkzU6a3bxNFSd+vQqQJQD7DOUrp/2PwEPJ2eqT4lGh6LA8HbIvu3jII//AQBGfMFuzYxrClrU88PzxvswjxIL7K8dInSzUq0+/gRmaA9qmOIY0DPUe/XKzdJDF5N3ckCPAgnkY8r7RxQmlRRtanaiz9UqLSJwqXny4708RX24Dgh0oI8QRpHJFk8AigfK3a2tO1iwCD3+MNLvkMjiMiaHR0cHM6Ly9idGMuY2FsZW5kYXIuY2F0YWxsYXh5LmNvbf/wEAjVitVEitDTX6tpQ3rAMSoI8SCYpRJeUhejNn4DApklf/8mINGrSgnOIov+cQ4ngDIbXwjxBGkckWXwCMxxJ07sER4ZAIPf4w0u+QyOKShodHRwczovL2Zpbm5leS5jYWxlbmRhci5ldGVybml0eXdhbGwuY29t//AIkYCHSl0C3wkI8BDNNzFZkJxxl7zu5BJ9Km1QCPAgK3sdWAuPM3BJrrDo+KQyyer7X/KImlf/wIsVzD/IfMwI8QRpHJFl8Ajwmij+1whTLwCD3+MNLvkMjiwraHR0cHM6Ly9ib2IuYnRjLmNhbGVuZGFyLm9wZW50aW1lc3RhbXBzLm9yZ/AIrL0eLYVDIlsI8BCGhrkQ9jnkGWeT/43rZ3uqCPEgutsjkZXDRIWZWwD+J8hmK+kNtU78RKldBgVcDWlaaHoI8CDoMX3+FUHW6FfFsyh0fCmwTiU1TbwUrxQc4KN062GzyQjxBGkckWTwCF6GsYF+QenIAIPf4w0u+QyOLi1odHRwczovL2FsaWNlLmJ0Yy5jYWxlbmRhci5vcGVudGltZXN0YW1wcy5vcmc="
+}
