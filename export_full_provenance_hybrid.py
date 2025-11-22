@@ -62,6 +62,8 @@ class ProvenanceEntry:
     # Metadata
     created_at: str = ""
     post_text: str = ""
+    parent_skeet_uri: str = ""
+    root_skeet_uri: str = ""
     
     # Verification summary
     fully_verified: bool = False
@@ -180,6 +182,8 @@ def build_provenance_entry(
         binding_stamped_at=entry["binding_stamped_at"],
         created_at=entry["created_at"],
         post_text=entry["post_text"],
+        parent_skeet_uri=entry.get("parent_skeet_uri", ""),
+        root_skeet_uri=entry.get("root_skeet_uri", ""),
         verification_errors=[]
     )
     

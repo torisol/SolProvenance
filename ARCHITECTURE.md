@@ -15,6 +15,10 @@ No record is *ever* updated after creation. All records are immutable.
 
 ```
 
+Create provenanceKey (one-time; public key + hardware/attestation metadata + keyBindingHash + OTS)
+↓
+(Optional) Create provenanceATT (one-time per hardware-backed key; attestation certs + attBindingHash + OTS)
+↓
 User writes post
 ↓
 GPG clearsigns → (signedText, gpgFingerprint)
@@ -42,24 +46,18 @@ Append to ledger.jsonl
 # 2. Record Types
 
 ## provenanceKey (persistent account-level)
-Stores:
-- armored GPG public key
-- fingerprint
+Stores: armored GPG public key + fingerprint, createdAt, hardwareBacked/hardwareType, attestationPresent/attestationRecordUri, keyBindingHash + keyOTSProofB64.
+Binding string (canonical): KEY|gpg_fingerprint=…|public_key=…|created_at=…|hardware_backed=…|hardware_type=…|attestation_present=…|attestation_record_uri=…
+
+## provenanceATT (hardware attestation, optional)
+Stores: keyRecordUri, attDeviceCert (required), optional attSig/attDec/attAut certs, createdAt, attBindingHash + attOTSProofB64.
+Binding string: ATT|key_record_uri=…|att_device_cert=…|att_sig_cert=…|att_dec_cert=…|att_aut_cert=…|created_at=…
 
 ## provenanceRoot (signature layer)
-Immutable per-post. Stores:
-- signedText (full clearsigned block)
-- gpgFingerprint
-- sigStampHash (SHA256)
-- sigOTSProofB64 (OTS proof)
+Immutable per-post. Stores: signedText, gpgFingerprint, sigStampHash, sigOTSProofB64.
 
 ## provenanceOTS (binding layer)
-Immutable. Stores:
-- provenanceRoot URI/CID
-- skeet URI/CID
-- bindingStampHash
-- bindingOTSProofB64
-- stampedAt
+Immutable. Stores: provenanceRoot URI/CID, skeet URI/CID, bindingStampHash, bindingOTSProofB64, stampedAt.
 
 ---
 

@@ -1,14 +1,17 @@
 """Immutable provenance pipeline for Bluesky using dual OpenTimestamps layers."""
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple
+from urllib.parse import urlparse
 
 from atproto import Client
 
@@ -41,8 +44,23 @@ PROVENANCE_KEY_LEXICON = {
         "properties": {
             "gpgFingerprint": {"type": "string"},
             "gpgPublicKeyArmored": {"type": "string"},
+            "createdAt": {"type": "string", "format": "datetime"},
+            "hardwareBacked": {"type": "boolean"},
+            "hardwareType": {"type": "string", "nullable": True},
+            "attestationPresent": {"type": "boolean"},
+            "attestationRecordUri": {"type": "string", "nullable": True},
+            "keyBindingHash": {"type": "string"},
+            "keyOTSProofB64": {"type": "string"},
         },
-        "required": ["gpgFingerprint", "gpgPublicKeyArmored"],
+        "required": [
+            "gpgFingerprint",
+            "gpgPublicKeyArmored",
+            "createdAt",
+            "hardwareBacked",
+            "attestationPresent",
+            "keyBindingHash",
+            "keyOTSProofB64",
+        ],
         "additionalProperties": False,
     },
 }
@@ -75,6 +93,34 @@ PROVENANCE_OTS_LEXICON = {
     },
 }
 
+PROVENANCE_ATT_LEXICON = {
+    "lexicon": 1,
+    "id": "com.SolProvenance.provenanceATT",
+    "type": "record",
+    "record": {
+        "key": "tid",
+        "description": "Attestation certificates for a hardware-backed key.",
+        "properties": {
+            "keyRecordUri": {"type": "string"},
+            "attDeviceCert": {"type": "string"},
+            "attSigCert": {"type": "string", "nullable": True},
+            "attDecCert": {"type": "string", "nullable": True},
+            "attAutCert": {"type": "string", "nullable": True},
+            "createdAt": {"type": "string", "format": "datetime"},
+            "attBindingHash": {"type": "string"},
+            "attOTSProofB64": {"type": "string"},
+        },
+        "required": [
+            "keyRecordUri",
+            "attDeviceCert",
+            "createdAt",
+            "attBindingHash",
+            "attOTSProofB64",
+        ],
+        "additionalProperties": False,
+    },
+}
+
 # === Configuration placeholders ===
 BLUESKY_HANDLE = "BLUESKY_HANDLE"
 BLUESKY_APP_PASSWORD = "BLUESKY_APP_PASSWORD"
@@ -84,11 +130,14 @@ LEDGER_PATH = Path("ledger.jsonl")
 PROVENANCE_ROOT_COLLECTION = "com.SolProvenance.provenanceRoot"
 PROVENANCE_KEY_COLLECTION = "com.SolProvenance.provenanceKey"
 PROVENANCE_OTS_COLLECTION = "com.SolProvenance.provenanceOTS"
+PROVENANCE_ATT_COLLECTION = "com.SolProvenance.provenanceATT"
 SKEET_COLLECTION = "app.bsky.feed.post"
+
+URL_RE = re.compile(r"(https?://[^\s]+)")
 
 
 # === Helper utilities ===
-def read_multiline(prompt="Enter text (finish with CTRL+D):"):
+def read_multiline(prompt: str = "Enter text (finish with CTRL+D):") -> str:
     print(prompt)
     lines = []
     try:
@@ -98,6 +147,7 @@ def read_multiline(prompt="Enter text (finish with CTRL+D):"):
     except EOFError:
         pass
     return "\n".join(lines)
+
 
 def now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -110,14 +160,6 @@ def _parse_gpg_fingerprint(raw: str) -> str:
             if len(fields) > 9 and fields[9]:
                 return fields[9]
     raise RuntimeError("Unable to locate GPG fingerprint in gpg output")
-
-
-def _export_gpg_public_key() -> str:
-    cmd = ["gpg", "--armor", "--export"]
-    if GPG_KEY_ID:
-        cmd.append(GPG_KEY_ID)
-    proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return proc.stdout.decode("utf-8")
 
 
 def ots_stamp_hash(hash_hex: str) -> str:
@@ -135,6 +177,43 @@ def ots_stamp_hash(hash_hex: str) -> str:
         proof_path = hash_path.with_suffix(hash_path.suffix + ".ots")
         proof_bytes = proof_path.read_bytes()
         return base64.b64encode(proof_bytes).decode("ascii")
+
+
+
+def _facet_to_dict(facet):
+    if hasattr(facet, "to_dict"):
+        return facet.to_dict()
+    if hasattr(facet, "as_dict"):
+        return facet.as_dict()  # type: ignore[attr-defined]
+    if hasattr(facet, "asdict"):
+        return facet.asdict()  # type: ignore[attr-defined]
+    if isinstance(facet, dict):
+        return facet
+    try:
+        return facet.__dict__
+    except Exception:
+        return {"data": str(facet)}
+
+
+def build_rich_text(post_text: str) -> Tuple[str, list]:
+    """Return text and link facets. Manual byte offsets to avoid SDK signature drift."""
+    facets: list = []
+    for match in URL_RE.finditer(post_text):
+        url = match.group(0)
+        byte_start = len(post_text[: match.start()].encode("utf-8"))
+        byte_end = len(post_text[: match.end()].encode("utf-8"))
+        facets.append(
+            {
+                "index": {"byteStart": byte_start, "byteEnd": byte_end},
+                "features": [
+                    {
+                        "$type": "app.bsky.richtext.facet#link",
+                        "uri": url,
+                    }
+                ],
+            }
+        )
+    return post_text, facets
 
 
 # === Required pipeline functions ===
@@ -166,37 +245,6 @@ def sign_post_text(post_text: str) -> Tuple[str, str]:
     return signed_text, gpg_fpr
 
 
-def ensure_provenance_key_record(client: Client, gpg_fpr: str, gpg_pubkey: str) -> None:
-    params = {
-        "repo": client.me.did,
-        "collection": PROVENANCE_KEY_COLLECTION,
-        "limit": 10,
-    }
-    res = client.com.atproto.repo.list_records(params=params)
-    for record in getattr(res, "records", []):
-        record_value = getattr(record, "value", None)
-        if record_value is None:
-            continue
-        if isinstance(record_value, dict):
-            current_fpr = record_value.get("gpgFingerprint")
-        else:
-            current_fpr = getattr(record_value, "gpgFingerprint", None)
-        if current_fpr == gpg_fpr:
-            return
-
-    record = {
-        "gpgFingerprint": gpg_fpr,
-        "gpgPublicKeyArmored": gpg_pubkey,
-    }
-    client.com.atproto.repo.create_record(
-        data={
-            "repo": client.me.did,
-            "collection": PROVENANCE_KEY_COLLECTION,
-            "record": record,
-        }
-    )
-
-
 def create_provenance_root_record(
     client: Client,
     signed_text: str,
@@ -220,11 +268,91 @@ def create_provenance_root_record(
     return res["uri"], res["cid"]
 
 
-def post_skeet(client: Client, post_text: str) -> Tuple[str, str]:
+
+
+def normalize_post_ref(uri: str, client: Client) -> Tuple[str, str, str, str]:
+    if uri.startswith("at://"):
+        without_scheme = uri[len("at://"):]
+        parts = without_scheme.split("/")
+        if len(parts) != 3:
+            raise ValueError(f"Unexpected at:// format: {uri}")
+        repo, collection, rkey = parts
+        return uri, repo, collection, rkey
+
+    parsed = urlparse(uri)
+    if parsed.scheme in {"http", "https"} and parsed.netloc.endswith("bsky.app"):
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) >= 4 and parts[0] == "profile" and parts[2] == "post":
+            repo = parts[1]
+            rkey = parts[3]
+            collection = SKEET_COLLECTION
+            if not repo.startswith("did:"):
+                resolved = client.com.atproto.identity.resolve_handle(params={"handle": repo})
+                repo = resolved.get("did") if isinstance(resolved, dict) else resolved.did
+            at_uri = f"at://{repo}/{collection}/{rkey}"
+            return at_uri, repo, collection, rkey
+
+    raise ValueError(f"Unsupported skeet link format: {uri}")
+
+
+def _extract_uri_cid(record) -> Tuple[str | None, str | None]:
+    uri = None
+    cid = None
+    if isinstance(record, dict):
+        uri = record.get("uri")
+        cid = record.get("cid")
+        value = record.get("value")
+        if uri is None and isinstance(value, dict):
+            uri = value.get("uri")
+        if cid is None and isinstance(value, dict):
+            cid = value.get("cid")
+    else:
+        uri = getattr(record, "uri", None)
+        cid = getattr(record, "cid", None)
+        value = getattr(record, "value", None)
+        if uri is None and isinstance(value, dict):
+            uri = value.get("uri")
+        elif uri is None:
+            uri = getattr(value, "uri", None)
+        if cid is None and isinstance(value, dict):
+            cid = value.get("cid")
+        elif cid is None:
+            cid = getattr(value, "cid", None)
+    return uri, cid
+
+
+def build_reply_block(client: Client, parent_uri: str, root_uri: str | None) -> tuple[dict, str, str]:
+    parent_at, parent_repo, parent_collection, parent_rkey = normalize_post_ref(parent_uri, client)
+    if root_uri:
+        root_at, root_repo, root_collection, root_rkey = normalize_post_ref(root_uri, client)
+    else:
+        root_at, root_repo, root_collection, root_rkey = parent_at, parent_repo, parent_collection, parent_rkey
+
+    parent_record = client.com.atproto.repo.get_record(
+        params={"repo": parent_repo, "collection": parent_collection, "rkey": parent_rkey}
+    )
+    root_record = client.com.atproto.repo.get_record(
+        params={"repo": root_repo, "collection": root_collection, "rkey": root_rkey}
+    )
+
+    parent_uri_val, parent_cid = _extract_uri_cid(parent_record)
+    root_uri_val, root_cid = _extract_uri_cid(root_record)
+
+    parent_ref = {"uri": parent_uri_val or parent_at, "cid": parent_cid}
+    root_ref = {"uri": root_uri_val or root_at, "cid": root_cid}
+
+    return {"parent": parent_ref, "root": root_ref}, parent_at, root_at
+
+def post_skeet(client: Client, post_text: str, facets: list | None = None, reply: dict | None = None) -> Tuple[str, str]:
     record = {
         "text": post_text,
         "createdAt": now_iso_utc(),
     }
+    if facets:
+        record["facets"] = facets
+    if reply:
+        record["reply"] = reply
+
     res = client.com.atproto.repo.create_record(
         data={
             "repo": client.me.did,
@@ -272,25 +400,43 @@ def append_ledger_entry(entry: dict, ledger_path: str = "ledger.jsonl") -> None:
 
 # === Main orchestration ===
 def main() -> None:
-    post_text = read_multiline().strip()
-    if not post_text:
+    parser = argparse.ArgumentParser(description="Post a skeet with SolProvenance provenance + OTS")
+    parser.add_argument("--reply-parent-uri", help="at:// or https://bsky.app/... link of the post you are replying to")
+    parser.add_argument(
+        "--reply-root-uri",
+        help="at:// or https://bsky.app/... link of the thread root (defaults to parent when replying)",
+    )
+    args = parser.parse_args()
+
+    reply_parent_uri = args.reply_parent_uri
+    reply_root_uri = args.reply_root_uri or reply_parent_uri
+
+    post_text_raw = read_multiline().strip()
+    if not post_text_raw:
         print("No post text provided; aborting.")
         return
+
+    rich_text, facets = build_rich_text(post_text_raw)
+    post_text = rich_text
 
     signed_text, gpg_fpr = sign_post_text(post_text)
     sig_stamp_input = f"{signed_text}|{gpg_fpr}"
     sig_stamp_hash = hashlib.sha256(sig_stamp_input.encode("utf-8")).hexdigest()
     sig_ots_proof_b64 = ots_stamp_hash(sig_stamp_hash)
 
-    gpg_pubkey = _export_gpg_public_key()
     client = login_client()
-    ensure_provenance_key_record(client, gpg_fpr, gpg_pubkey)
 
     prov_uri, prov_cid = create_provenance_root_record(
         client, signed_text, gpg_fpr, sig_stamp_hash, sig_ots_proof_b64
     )
 
-    skeet_uri, skeet_cid = post_skeet(client, post_text)
+    reply_block = None
+    reply_parent_norm = None
+    reply_root_norm = None
+    if reply_parent_uri:
+        reply_block, reply_parent_norm, reply_root_norm = build_reply_block(client, reply_parent_uri, reply_root_uri)
+
+    skeet_uri, skeet_cid = post_skeet(client, post_text, facets=facets, reply=reply_block)
     # binding_input = signedText|gpgFingerprint|provUri|provCid|skeetUri|skeetCid
     binding_input = "|".join([signed_text, gpg_fpr, prov_uri, prov_cid, skeet_uri, skeet_cid])
     binding_stamp_hash = hashlib.sha256(binding_input.encode("utf-8")).hexdigest()
@@ -325,6 +471,11 @@ def main() -> None:
         "provenance_ots_cid": ots_cid,
         "binding_stamped_at": stamped_at,
     }
+    if reply_parent_norm:
+        ledger_entry["parent_skeet_uri"] = reply_parent_norm
+    if reply_root_norm:
+        ledger_entry["root_skeet_uri"] = reply_root_norm
+
     append_ledger_entry(ledger_entry, str(LEDGER_PATH))
 
     print("Provenance workflow complete. Summary:")

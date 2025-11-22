@@ -5,6 +5,7 @@
 ```
 
 com.SolProvenance.provenanceKey
+com.SolProvenance.provenanceATT
 com.SolProvenance.provenanceRoot
 com.SolProvenance.provenanceOTS
 
@@ -14,7 +15,7 @@ com.SolProvenance.provenanceOTS
 
 # 1. provenanceKey Record
 
-Stores account-level identity key.
+Account-level identity key with hardware/attestation metadata and immutable binding.
 
 ```json
 {
@@ -23,19 +24,79 @@ Stores account-level identity key.
   "type": "record",
   "record": {
     "key": "literal",
-    "description": "GPG public key + fingerprint",
+    "description": "GPG public key and hardware/attestation metadata",
     "properties": {
       "gpgFingerprint": {"type": "string"},
-      "gpgPublicKeyArmored": {"type": "string"}
+      "gpgPublicKeyArmored": {"type": "string"},
+      "createdAt": {"type": "string", "format": "datetime"},
+      "hardwareBacked": {"type": "boolean"},
+      "hardwareType": {"type": "string", "nullable": true},
+      "attestationPresent": {"type": "boolean"},
+      "attestationRecordUri": {"type": "string", "nullable": true},
+      "keyBindingHash": {"type": "string"},
+      "keyOTSProofB64": {"type": "string"}
     },
-    "required": ["gpgFingerprint", "gpgPublicKeyArmored"]
+    "required": [
+      "gpgFingerprint",
+      "gpgPublicKeyArmored",
+      "createdAt",
+      "hardwareBacked",
+      "attestationPresent",
+      "keyBindingHash",
+      "keyOTSProofB64"
+    ]
   }
 }
 ````
 
+Canonical binding string:
+```
+KEY|gpg_fingerprint=…|public_key=…|created_at=…|hardware_backed=…|hardware_type=…|attestation_present=…|attestation_record_uri=…
+```
+
 ---
 
-# 2. provenanceRoot Record
+# 2. provenanceATT Record
+
+Hardware attestation for a key.
+
+```json
+{
+  "lexicon": 1,
+  "id": "com.SolProvenance.provenanceATT",
+  "type": "record",
+  "record": {
+    "key": "tid",
+    "description": "Attestation certificates for a hardware-backed key.",
+    "properties": {
+      "keyRecordUri": {"type": "string"},
+      "attDeviceCert": {"type": "string"},
+      "attSigCert": {"type": "string", "nullable": true},
+      "attDecCert": {"type": "string", "nullable": true},
+      "attAutCert": {"type": "string", "nullable": true},
+      "createdAt": {"type": "string", "format": "datetime"},
+      "attBindingHash": {"type": "string"},
+      "attOTSProofB64": {"type": "string"}
+    },
+    "required": [
+      "keyRecordUri",
+      "attDeviceCert",
+      "createdAt",
+      "attBindingHash",
+      "attOTSProofB64"
+    ]
+  }
+}
+```
+
+Canonical binding string:
+```
+ATT|key_record_uri=…|att_device_cert=…|att_sig_cert=…|att_dec_cert=…|att_aut_cert=…|created_at=…
+```
+
+---
+
+# 3. provenanceRoot Record
 
 Per-post signature layer.
 
@@ -60,7 +121,7 @@ Per-post signature layer.
 
 ---
 
-# 3. provenanceOTS Record
+# 4. provenanceOTS Record
 
 Binding layer connecting signature → ATProto.
 

@@ -105,17 +105,18 @@ Append to local ledger.jsonl (audit trail)
 ### Custom AT Protocol Lexicons
 
 **`com.SolProvenance.provenanceKey`**
-- Persistent account record
-- Stores GPG public key + fingerprint
-- Single source of truth for verification
+- Account-level key record; stores GPG public key/fingerprint, createdAt, hardware flags, optional attestation URI, canonical keyBindingHash + OTS proof.
+- Hardware states: software-only; imported-to-hardware (hardwareBacked=true, attestationPresent=false); generated-on-hardware with attestation (attestationPresent=true, attestationRecordUri set).
+
+**`com.SolProvenance.provenanceATT`**
+- Attestation certs for a hardware-backed key. Fields: keyRecordUri, attDeviceCert (required), optional attSig/attDec/attAut certs, createdAt, attBindingHash + OTS proof.
+- Binding string uses fixed-order fields with explicit "NA" placeholders for missing certs.
 
 **`com.SolProvenance.provenanceRoot`**
-- Per-post provenance record
-- Anchors the plaintext to be skeeted to a cryptographic signature, OTS stamp, and uri/cid before its ever posted
-- Includes OTS proof and signature hash
+- Per-post provenance record: signedText, gpgFingerprint, sigStampHash + sigOTSProofB64.
 
 **`com.SolProvenance.provenanceOTS`**
-- Binds provenanceRoot and skeet together through uris/cids, cryptographic signature, and OTS proofs
+- Binds provenanceRoot and skeet via URIs/CIDs plus binding hash + OTS proof (no mutation of the skeet record).
 
 ---
 
@@ -167,22 +168,69 @@ GPG_KEY_ID = "YOUR_KEY_FINGERPRINT"  # Optional, uses default key if omitted
 
 ## Usage
 
+### Key & Attestation setup (one-time)
+
+- Create a provenanceKey from scratch:
+
+```bash
+python create_provenance_key.py \
+  --handle your-handle.bsky.social \
+  --app-password YOUR_APP_PASSWORD \
+  --gpg-fpr YOUR_FPR \
+  --hardware-backed true \
+  --hardware-type yubikey \
+  --attestation-present false
+```
+
+- Upgrade an existing provenanceKey to the new schema:
+
+```bash
+python update_provenance_key.py \
+  --handle your-handle.bsky.social \
+  --app-password YOUR_APP_PASSWORD \
+  --gpg-fpr YOUR_FPR
+```
+
+- Add hardware attestation (optional, when keys were generated on-device):
+
+```bash
+python create_provenance_att.py \
+  --handle your-handle.bsky.social \
+  --app-password YOUR_APP_PASSWORD \
+  --key-record-uri at://did:.../com.SolProvenance.provenanceKey/xyz \
+  --att-device-cert /path/to/ATT.pem \
+  --att-sig-cert /path/to/SIG.pem \
+  --att-dec-cert /path/to/DEC.pem \
+  --att-aut-cert /path/to/AUT.pem
+```
+
+Each record computes a canonical binding string, hashes it (sha256), stamps it with OpenTimestamps, then creates the record with the proof inlined.
+
 ### Posting with Provenance
 
 ```bash
 python post_with_provenance.py
-Enter skeet text (Ctrl+C to abort):
-> This is a signed post with cryptographic provenance!
+Enter skeet text (Ctrl+D to finish input):
+SolProvenance test 1 – plain root skeet.
+No links, no replies.
+```
+
+Link facets: URLs in your text are auto-detected and attached as rich-text facets so clients render them clickable. The signed text, posted text, and ledger text all remain identical.
+
+Replies: you can point at a parent (and optionally root) using either `at://` URIs or `https://bsky.app/profile/.../post/...` links. Example:
+
+```bash
+python post_with_provenance.py   --reply-parent-uri "https://bsky.app/profile/handle.bsky.social/post/3abc..."   --reply-root-uri   "at://did:plc:.../app.bsky.feed.post/3xyz..."
 ```
 
 **What happens:**
 1. Text is signed with your YubiKey (PIN required)
 2. Signature hash computed and timestamped
 3. provenanceRoot record created on Bluesky
-4. Post published
+4. Post (or reply) published with optional facets/reply block
 5. Binding hash computed and timestamped
 6. provenanceOTS record created on Bluesky
-7. Entry appended to `ledger.jsonl`
+7. Entry appended to `ledger.jsonl` (now also stores `parent_skeet_uri` / `root_skeet_uri` when replying)
 
 ### Exporting Complete Chain
 
@@ -212,6 +260,7 @@ python export_full_provenance_hybrid.py \
 
 **Output includes:**
 - All posts with complete CIDs (from ledger)
+- Reply context (parent/root URIs when present)
 - All provenance records (signature + binding layers)
 - Account-level public key
 - Verification status for each record
@@ -247,7 +296,10 @@ echo -n "${SIGNED_TEXT}|${GPG_FPR}|${PROV_URI}|${PROV_CID}|${SKEET_URI}|${SKEET_
 ```
 SolProvenance/
 ├── README.md                              # This file
-├── post_with_provenance.py                # Main posting tool
+├── post_with_provenance.py                # Main posting tool (root + skeet + OTS)
+├── create_provenance_key.py               # One-time provenanceKey creator
+├── update_provenance_key.py               # Upgrade existing provenanceKey to new schema
+├── create_provenance_att.py               # Create provenanceATT with hardware attestation certs
 ├── export_full_provenance_hybrid.py       # Trust-but-verify export
 ├── verify_post.py                         # Verification tool (TODO)
 ├── requirements.txt                       # Python dependencies
@@ -256,7 +308,8 @@ SolProvenance/
 │   ├── 3m5w2orpjcb2o.json                # Skeet (post)
 │   ├── 3m5w2ornkgy25.json                # provenanceRoot record
 │   ├── 3m5w2ot7y6x22.json                # provenanceOTS record
-│   └── 3m5uivxs3zf2d.json                # provenanceKey record
+│   ├── 3m5uivxs3zf2d.json                # provenanceKey record
+│   └── provenanceATT/                    # (add) attestation examples
 └── docs/
     ├── ARCHITECTURE.md                    # Detailed technical design
     ├── THREAT_MODEL.md                    # Security analysis
@@ -323,6 +376,40 @@ SolProvenance/
 ```
 
 ---
+
+
+## Hardware attestation (YubiKey)
+
+- Attestation certs prove the PGP subkeys were generated on-device (not imported). We store them in `com.SolProvenance.provenanceATT`, bound with a canonical string and OTS proof.
+- Reference: Yubico OpenPGP attestation docs: https://developers.yubico.com/PGP/Attestation.html
+- Verification helper: `yk-attest-verify` (prebuilt Debian package works on Ubuntu):
+
+```bash
+sudo apt install ./yk-attest-verify_0.2.19_linux_amd64.deb
+# Verify device + slot certs against Yubico CA
+yk-attest-verify pgp SIG.pem ATT.pem
+yk-attest-verify pgp DEC.pem ATT.pem
+yk-attest-verify pgp AUT.pem ATT.pem
+```
+
+Sample output (SIG):
+```
+YubiKey OPGP Attestation:
+ - Generation Date: 2025-10-26 19:16:11 -0500 CDT
+ - Key slot       : SIG
+ - Key source     : Generated
+ - Key fingerprint: d16ae3b579ee87dd2d8efff4deba71c643c885d3
+ - YubiKey Version: v5.7.4
+ - Touch Policy   : Enabled-Cached
+Attestation Policy Checks:
+✔ All policy checks OK
+```
+
+Interpreting results:
+- `Key source: Generated` must be present for attestation to be meaningful (imported keys will fail).
+- The fingerprint reported by attestation should match the `gpgFingerprint` in your provenanceKey.
+- Each attestation cert (ATT/SIG/DEC/AUT) can be stored in `provenanceATT`; SIG/DEC/AUT are optional, ATT is required.
+
 
 ## Threat Model
 
